@@ -1,3 +1,3 @@
-# hw-06-webscrape
+# web-scrape
 
-Starter docs and code and data for hw-06-webscrape
+This project scrapes video game ratings from Metacritic and compares the rating distributions of different genres.
