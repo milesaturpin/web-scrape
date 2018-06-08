@@ -1,0 +1,210 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+games_stats <- games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  group_by(action) %>% 
+  summarise(mean_meta = mean(metacritic_score),
+            mean_user = mean(user_score))
+
+games_stats
+
+games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  ggplot(aes(metacritic_score, fill = action, color = action)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = stats$mean_meta[[1]], color = "red") +
+  geom_vline(xintercept = stats$mean_meta[[2]], color = "blue")
+
+games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  ggplot(aes(user_score, fill = action, color = action)) +
+  geom_density(alpha = 0.5)
+
+games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  ggplot(aes(action, metacritic_score, color = action)) +
+  geom_boxplot() +
+  theme_minimal()
+
+games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  ggplot(aes(action, user_score, color = action)) +
+  geom_boxplot() +
+  theme_minimal()
+
+# hypothesis test for metacritic
+null_dist_meta <- games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  specify(response = metacritic_score, explanatory = action) %>% 
+  hypothesize(null = "independence") %>% 
+  generate(reps = 10000, type = "permute") %>% 
+  calculate(stat = "diff in means", order = c(TRUE, FALSE))
+
+null_dist_meta %>% 
+  filter(stat > games_stats$mean_meta[[2]] - games_stats$mean_meta[[1]]) %>% 
+  summarise(pval = 2 * n() / nrow(null_dist_meta))
+
+# hypothesis test for user 
+null_dist_user <- games_df_action %>% 
+  filter(!is.na(action)) %>% 
+  specify(response = user_score, explanatory = action) %>% 
+  hypothesize(null = "independence") %>% 
+  generate(reps = 10000, type = "permute") %>% 
+  calculate(stat = "diff in means", order = c(TRUE, FALSE))
+
+null_dist_user %>% 
+  filter(stat > games_stats$mean_user[[2]] - games_stats$mean_user[[1]]) %>% 
+  summarise(pval = 2 * n() / nrow(null_dist_user))
+```
+
+
+
+```{r}
+games_genres <- games_df %>% 
+  filter(!is.na(genres)) %>% 
+  mutate(genres = str_to_lower(genres)) %>% 
+  mutate(genres = str_replace(genres, "2d", "two_d"))
+
+# split up genres
+games_genres_long <- games_genres %>%
+  cSplit(splitCols = "genres", sep = ", ", direction = "long") %>% 
+  as.data.frame()
+
+# genre list, top 10 most frequent
+genres_list <- games_genres_long %>% 
+  count(genres) %>% 
+  filter(n > 10) %>% 
+  pull(genres)
+
+# function to do one hot encoding of each genres attr
+one_hot <- function(genres_attr) {
+  tbl <- tibble(action = NA)
+  for (genre in genres_list) {
+    tbl <- tbl %>% 
+      mutate(!! quo_name(enquo(genre)) := str_detect(genres_attr, genre))
+  }
+  return(tbl)
+}
+
+# do one hot encoding for all genres attr and merge
+genres_one_hot <- map_df(games_genres$genres, one_hot)
+games_genres <- cbind(games_genres, genres_one_hot)
+```
+
+
+
+```{r}
+genre_significance_finder <- function(genre_param) { 
+
+  quo_genre <- genre_param
+  quo_name_genre <- quo_name(quo_genre)
+  genre_stats <- games_genres %>% 
+    group_by(!! quo_genre) %>% 
+    summarise(mean_meta = mean(metacritic_score),
+              sd_meta = sd(metacritic_score),
+              mean_user = mean(user_score),
+              sd_user = sd(user_score),
+              n = n())
+  mu_meta <- genre_stats$mean_meta[[2]] - genre_stats$mean_meta[[1]]
+  sigma_meta <- sqrt(  ((genre_stats$sd_meta[[2]])^2/genre_stats$n[[2]])+
+                       ((genre_stats$sd_meta[[1]])^2/genre_stats$n[[1]]))
+  sample_t_meta <- mu_meta / sigma_meta
+  df_meta <- min(genre_stats$n[[1]],genre_stats$n[[2]])
+  pval_meta <- pt(sample_t_meta, df_meta, lower.tail = FALSE)
+  
+  g <- games_genres %>%
+    ggplot(aes_string(x = quo_name_genre, y = quote(metacritic_score), color = quo_name_genre)) +
+    geom_boxplot() +
+    theme_minimal()
+  print(g)
+  
+  mu_user <- genre_stats$mean_user[[2]] - genre_stats$mean_user[[1]]
+  sigma_user <- sqrt(  ((genre_stats$sd_user[[2]])^2/genre_stats$n[[2]])+
+                       ((genre_stats$sd_user[[1]])^2/genre_stats$n[[1]]))
+  sample_t_user <- mu_user / sigma_user
+  df_user <- min(genre_stats$n[[1]],genre_stats$n[[2]])
+  pval_user <- pt(sample_t_user, df_user, lower.tail = FALSE)
+  
+  g1 <- games_genres %>%
+    ggplot(aes_string(x = quo_name_genre, y = quote(user_score), color = quo_name_genre)) +
+    geom_boxplot() +
+    theme_minimal()
+  print(g1)
+  
+  return(tibble(
+    genre = quo_name_genre,
+    pval_meta_ = pval_meta,
+    pval_user_ = pval_user
+  ))
+  
+  
+  
+  # hypothesis test for metacritic
+  # null_dist_meta <- games_genres %>%
+  #   specify(response = metacritic_score, explanatory = ) %>%
+  #   hypothesize(null = "independence") %>%
+  #   generate(reps = 10000, type = "permute") %>%
+  #   calculate(stat = "diff in means", order = c(TRUE, FALSE))
+  # 
+  # pval_meta <- null_dist_meta %>%
+  #   filter(stat > genre_stats$mean_meta[[2]] - genre_stats$mean_meta[[1]]) %>%
+  #   summarise(pval_meta = 2 * n() / nrow(null_dist_meta)) %>% 
+  #   pull()
+  # 
+  # # hypothesis test for user
+  # null_dist_user <- games_genres %>%
+  #   specify(response = user_score, explanatory = genre) %>%
+  #   hypothesize(null = "independence") %>%
+  #   generate(reps = 10000, type = "permute") %>%
+  #   calculate(stat = "diff in means", order = c(TRUE, FALSE))
+  # 
+  # pval_user <- null_dist_user %>%
+  #   filter(stat > genre_stats$mean_user[[2]] - genre_stats$mean_user[[1]]) %>%
+  #   summarise(pval_user = 2 * n() / nrow(null_dist_user)) %>% 
+  #   pull()
+  # 
+  # return(c(pval_meta, pval_user))
+}
+genres_list_t <- c(quo(action),quo(two_d),quo(arcade),quo(shooter))
+genre_significance_finder(general)
+map_df(genres_list_t, genre_significance_finder)
+
+# genre_significance_finder("action")
+# genres_list
+# genre_ <- quo("action")
+# genre <- quo_name("action")
+# test %>% 
+#   mutate(!! genre := 1) %>% 
+#   group_by(!! genre_)
+
+
+```
+
